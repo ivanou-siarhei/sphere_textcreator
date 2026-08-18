@@ -1,0 +1,22 @@
+{
+  "name": "agent-sphere-agent",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "TextCreator — paid copywriting agent on Unicity Sphere",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@unicitylabs/sphere-sdk": "^0.14.9",
+    "dotenv": "^17.4.2",
+    "openai": "^7.4.0",
+    "ws": "^8.21.3"
+  }
+}
