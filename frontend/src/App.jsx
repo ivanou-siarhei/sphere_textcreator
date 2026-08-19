@@ -20,8 +20,20 @@ const MAX_REQUEST_LEN = 4000;
 const UCT_COIN_ID_TESTNET2 = 'f581d30f593e4b369d684a4563b5246f07b1d265f7178a2c0a82b81f39c24dc0';
 const PRICE_MICRO = BigInt(Math.round(PRICE * 1e6)).toString();
 
+// Minimum scopes the page needs for its actions; anything else degrades gracefully.
+// Required because a RESUMED session reuses whatever subset was originally approved;
+// upgrading only happens on a fresh (non-resume) approval handshake (Connect v2.1).
+const SCOPES_FOR_BALANCE = ['balance:read'];
+const SCOPES_FOR_DM = ['dm:request'];
+const SCOPES_FOR_PAY = ['transfer:request'];
+const ALL_REQUIRED_SCOPES = ['identity:read', 'balance:read', 'tokens:read', 'transfer:request', 'dm:request'];
+
+function hasAll(granted, required) {
+  return !!granted && required.every((s) => granted.has(s));
+}
+
 const WALLET_ERRORS = {
-  4002: 'The wallet did not grant the required permission for this action.',
+  4002: 'The wallet did not grant the required permission for this action. Disconnect and connect again, then approve EVERY listed permission.',
   4003: 'The request was rejected in the wallet.',
   4007: 'Unsupported wallet version. Open or update sphere.unicity.network and try again.',
   4008: 'Network mismatch: this page targets Unicity testnet2. Switch your wallet network.',
@@ -54,6 +66,7 @@ function App() {
   const [status, setStatus] = useState('disconnected'); // disconnected | connecting | connected
   const [identity, setIdentity] = useState(null);       // PublicIdentity: chainPubkey, nametag?, directAddress?
   const [uctBalance, setUctBalance] = useState(null);   // formatted string | null
+  const [granted, setGranted] = useState(null);         // Set<PermissionScope> from handshake
   const [actionError, setActionError] = useState(null);
   const [payState, setPayState] = useState('idle');     // idle | confirming | done | error
   const [payInfo, setPayInfo] = useState(null);
@@ -71,7 +84,13 @@ function App() {
       import('@unicitylabs/sphere-sdk/connect/browser'),
     ]);
 
-  const refreshBalance = async (client) => {
+  const refreshBalance = async (client, grantedSet) => {
+    // Skip the query outright when the session was approved without balance:read —
+    // the host rejects it anyway (4002); the UI shows 'not permitted' instead.
+    if (!client || !hasAll(grantedSet ?? granted, SCOPES_FOR_BALANCE)) {
+      setUctBalance(null);
+      return;
+    }
     try {
       const result = await client.query('sphere_getAssets');
       setUctBalance(extractUctBalance(result));
@@ -80,24 +99,25 @@ function App() {
     }
   };
 
-  const attachEvents = (client, connectSdk) => {
+  const attachEvents = (client, connectSdk, grantedSet) => {
     const { WALLET_EVENTS } = connectSdk;
     client.on(WALLET_EVENTS.UNLOCKED, (payload) => {
       if (payload && typeof payload === 'object' && payload.chainPubkey) {
         setIdentity(payload);
-        refreshBalance(client);
+        refreshBalance(client, grantedSet);
       }
     });
     client.on(WALLET_EVENTS.IDENTITY_CHANGED, (payload) => {
       if (payload && typeof payload === 'object' && payload.chainPubkey) {
         setIdentity(payload);
       }
-      refreshBalance(client);
+      refreshBalance(client, grantedSet);
     });
     client.on(WALLET_EVENTS.DISCONNECTED, () => {
       clientRef.current = null;
       setIdentity(null);
       setUctBalance(null);
+      setGranted(null);
       setStatus('disconnected');
       setPayState('idle');
       setPayInfo(null);
@@ -132,17 +152,28 @@ function App() {
 
     clientRef.current = result.client;
     sessionStorage.setItem(SESSION_KEY, result.connection.sessionId);
-    attachEvents(result.client, connectSdk);
+    const grantedSet = new Set(result.connection.permissions ?? []);
+    setGranted(grantedSet);
+    attachEvents(result.client, connectSdk, grantedSet);
     setStatus('connected');
     setActionError(null);
 
     const ident = result.client.walletIdentity ?? result.connection.identity ?? null;
     setIdentity(ident);
 
+    // Missing scopes can only be granted in a FRESH approval handshake; a resumed
+    // session keeps the old subset. Tell the user to reconnect rather than retry.
+    const missing = ALL_REQUIRED_SCOPES.filter((s) => !grantedSet.has(s));
+    if (missing.length > 0 && !silent) {
+      setActionError(
+        'The wallet approved only some of the requested permissions. ' +
+        'Disconnect and connect again, then approve the full list. Missing: ' + missing.join(', ') + '.');
+    }
+
     if (result.client.walletLocked) {
       setUctBalance(null); // balance query answers 4009 until the wallet is unlocked
     } else {
-      await refreshBalance(result.client);
+      await refreshBalance(result.client, grantedSet);
     }
   };
 
@@ -190,6 +221,7 @@ function App() {
     sessionStorage.removeItem(SESSION_KEY);
     setIdentity(null);
     setUctBalance(null);
+    setGranted(null);
     setStatus('disconnected');
     setPayState('idle');
     setPayInfo(null);
@@ -257,7 +289,7 @@ function App() {
       const result = await client.intent('send', params);
       setPayState('done');
       setPayInfo(result?.transferId ?? null);
-      await refreshBalance(client);
+      await refreshBalance(client, granted);
     } catch (err) {
       setPayState('error');
       setActionError(describeError(err));
@@ -269,11 +301,23 @@ function App() {
     ? (identity.nametag ? null : `${identity.chainPubkey.slice(0, 8)}…${identity.chainPubkey.slice(-6)}`)
     : null;
 
+  // Actions the approved session is actually allowed to perform (host enforces these
+  // minus the scope; disable locally and direct the user to reconnect).
+  const canReadBalance = hasAll(granted, SCOPES_FOR_BALANCE);
+  const canSendDm = hasAll(granted, SCOPES_FOR_DM);
+  const canPay = hasAll(granted, SCOPES_FOR_PAY);
+
   const requestBusy = status === 'connecting' || requestState === 'sending';
   const submitLabel =
     status === 'connected'
       ? (requestState === 'sending' ? 'Waiting for wallet confirmation…' : `Send to @${NAMETAG}`)
       : (status === 'connecting' ? 'Connecting…' : 'Connect wallet & send');
+  const payLabel =
+    payState === 'confirming'
+      ? 'Waiting for wallet confirmation…'
+      : (canPay
+          ? `Pay ${PRICE} UCT to @${NAMETAG}`
+          : 'Payment not allowed by this wallet session');
 
   return (
     <div className="page">
@@ -298,7 +342,7 @@ function App() {
               <p className="wallet-note">
                 Connect your Unicity Sphere wallet to send requests, check your balance and pay —
                 all from this page. The wallet opens in a small popup via the Sphere Connect Protocol;
-                this site never touches your keys.
+                this site never touches your keys. When the wallet asks, approve ALL listed permissions.
               </p>
               <button type="button" className="wallet-button" onClick={connect}>
                 Connect Sphere Wallet
@@ -320,15 +364,17 @@ function App() {
               <div className="wallet-info">
                 <span className="wallet-nametag">{walletLabel || shortAddress}</span>
                 <span className="wallet-balance">
-                  UCT balance: {uctBalance ?? 'unavailable'}
+                  UCT balance: {canReadBalance
+                    ? (clientRef.current?.walletLocked ? 'locked' : (uctBalance ?? 'unavailable'))
+                    : 'not permitted — reconnect with all permissions'}
                 </span>
               </div>
               <div className="wallet-actions">
                 <button
                   type="button"
                   className="wallet-button secondary"
-                  onClick={() => refreshBalance(clientRef.current)}
-                  disabled={payState !== 'idle' || clientRef.current?.walletLocked}
+                  onClick={() => refreshBalance(clientRef.current, granted)}
+                  disabled={payState !== 'idle' || clientRef.current?.walletLocked || !canReadBalance}
                 >
                   Refresh
                 </button>
@@ -337,6 +383,13 @@ function App() {
                 </button>
               </div>
             </div>
+          )}
+
+          {!canSendDm && status === 'connected' && (
+            <p className="wallet-error">
+              DM sending is not permitted by the current wallet session.
+              Disconnect and connect again, approving all requested permissions.
+            </p>
           )}
 
           {actionError && <p className="wallet-error">{actionError}</p>}
@@ -367,7 +420,7 @@ function App() {
               type="button"
               className="wallet-button"
               onClick={status === 'connected' ? submitRequest : connectAndSubmit}
-              disabled={!requestText.trim() || requestBusy}
+              disabled={!requestText.trim() || requestBusy || (status === 'connected' && !canSendDm)}
             >
               {submitLabel}
             </button>
@@ -401,9 +454,9 @@ function App() {
                 type="button"
                 className="pay-button"
                 onClick={pay}
-                disabled={payState === 'confirming'}
+                disabled={payState === 'confirming' || !canPay}
               >
-                {payState === 'confirming' ? 'Waiting for wallet confirmation…' : `Pay ${PRICE} UCT to @${NAMETAG}`}
+                {payLabel}
               </button>
               {payState === 'done' && (
                 <p className="request-note">
