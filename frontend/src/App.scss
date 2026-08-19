@@ -248,6 +248,116 @@
   color: #f87171;
 }
 
+.request-hint {
+  font-size: 13px;
+  line-height: 1.5;
+  color: #8a8a96;
+  margin-bottom: 12px;
+}
+
+.request-input {
+  width: 100%;
+  resize: vertical;
+  min-height: 120px;
+  background: #23232d;
+  color: #e5e5e5;
+  border: 1px solid #32323e;
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 14px;
+  line-height: 1.5;
+  font-family: inherit;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+
+  &::placeholder {
+    color: #555;
+  }
+
+  &:focus {
+    outline: none;
+    border-color: #FF6F00;
+    box-shadow: 0 0 0 3px rgba(255, 111, 0, 0.15);
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+}
+
+.request-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.char-count {
+  font-size: 12px;
+  color: #555;
+  font-variant-numeric: tabular-nums;
+}
+
+.request-note {
+  margin-top: 12px;
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #7ddb9f;
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  border-radius: 10px;
+
+  strong {
+    color: #FF9E40;
+  }
+}
+
+.request-pay {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px dashed #32323e;
+}
+
+.order-code-label {
+  display: block;
+  font-size: 12px;
+  color: #8a8a96;
+  margin-bottom: 6px;
+}
+
+.order-code-input {
+  width: 100%;
+  background: #23232d;
+  color: #e5e5e5;
+  border: 1px solid #32323e;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 10px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+
+  &::placeholder {
+    color: #555;
+    text-transform: none;
+    letter-spacing: normal;
+  }
+
+  &:focus {
+    outline: none;
+    border-color: #FF6F00;
+    box-shadow: 0 0 0 3px rgba(255, 111, 0, 0.15);
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+}
+
 
 .steps {
   padding-left: 20px;
